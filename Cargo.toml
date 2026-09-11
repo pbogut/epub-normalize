@@ -1,0 +1,29 @@
+[package]
+name = "epub-normalize"
+version = "0.1.0"
+edition = "2024"
+description = "Normalize EPUB typography from the command line."
+license = "AGPL-3.0-only"
+readme = "README.md"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+libxml = "0.3"
+percent-encoding = "2"
+regex = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tempfile = "3"
+unicode-normalization = "0.1"
+unicode-casefold = "0.2"
+walkdir = "2"
+zip = { version = "6", default-features = false, features = ["deflate"] }
+same-file = "1"
+ctrlc = "3"
+wait-timeout = "0.2"
+mime_guess = "2"
+
+[profile.release]
+lto = true
+strip = true
