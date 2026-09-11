@@ -494,23 +494,13 @@ fn enforce_validation(report: &ValidationReport) -> Result<()> {
     Ok(())
 }
 
+#[derive(Default)]
 pub struct Options<'a> {
     pub output_filename: Option<&'a str>,
     pub preserve_publisher_css: bool,
     pub progress: Option<&'a dyn Fn(&str)>,
     pub checker: Option<&'a dyn crate::epubcheck::Checker>,
     pub max_size_bytes: Option<u64>,
-}
-impl Default for Options<'_> {
-    fn default() -> Self {
-        Self {
-            output_filename: None,
-            preserve_publisher_css: false,
-            progress: None,
-            checker: None,
-            max_size_bytes: None,
-        }
-    }
 }
 #[derive(Debug)]
 pub struct OptimizationResult {

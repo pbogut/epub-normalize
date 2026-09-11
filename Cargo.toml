@@ -21,7 +21,6 @@ walkdir = "2"
 zip = { version = "6", default-features = false, features = ["deflate"] }
 same-file = "1"
 ctrlc = "3"
-wait-timeout = "0.2"
 mime_guess = "2"
 
 [profile.release]

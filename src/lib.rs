@@ -1,4 +1,6 @@
 pub mod archive;
+pub mod calibre;
+pub mod cli;
 pub mod content;
 pub mod core;
 pub mod epubcheck;
