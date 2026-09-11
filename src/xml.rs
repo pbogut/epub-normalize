@@ -18,6 +18,7 @@ pub struct Node(Rc<RefCell<Data>>);
 struct Data {
     name: String,
     namespace: String,
+    bindings: BTreeMap<String, String>,
     attrs: BTreeMap<String, String>,
     children: Vec<Node>,
     parent: Weak<RefCell<Data>>,
@@ -28,6 +29,7 @@ enum Kind {
     Element,
     Text(String),
     Raw(String),
+    Entity(String),
 }
 
 pub struct Xml {
@@ -103,6 +105,12 @@ fn convert(doc: &Document, source: &libxml::tree::Node) -> Node {
             format!("{prefix}:{}", source.get_name())
         };
         let node = Node::element(&name, &namespace.map(|n| n.get_href()).unwrap_or_default());
+        for ns in source.get_namespaces(doc) {
+            node.0
+                .borrow_mut()
+                .bindings
+                .insert(ns.get_prefix(), ns.get_href());
+        }
         for ns in source.get_namespace_declarations() {
             let prefix = ns.get_prefix();
             node.set(
@@ -131,6 +139,8 @@ fn convert(doc: &Document, source: &libxml::tree::Node) -> Node {
         node
     } else if source.is_text_node() || source.get_type() == Some(NodeType::CDataSectionNode) {
         Node::text(&source.get_content())
+    } else if source.get_type() == Some(NodeType::EntityRefNode) {
+        Node::new("", "", Kind::Entity(doc.node_to_string(source)))
     } else {
         Node::new("", "", Kind::Raw(doc.node_to_string(source)))
     }
@@ -147,6 +157,7 @@ impl Node {
         Self(Rc::new(RefCell::new(Data {
             name: name.into(),
             namespace: namespace.into(),
+            bindings: BTreeMap::new(),
             attrs: BTreeMap::new(),
             children: Vec::new(),
             parent: Weak::new(),
@@ -196,7 +207,15 @@ impl Node {
         self.0.borrow().attrs.contains_key(name)
     }
     pub fn set(&self, name: &str, value: &str) {
-        self.0.borrow_mut().attrs.insert(name.into(), value.into());
+        let mut data = self.0.borrow_mut();
+        if name == "xmlns" || name.starts_with("xmlns:") {
+            let prefix = name.strip_prefix("xmlns:").unwrap_or("");
+            data.bindings.insert(prefix.into(), value.into());
+            if data.name.rsplit_once(':').map_or("", |(p, _)| p) == prefix {
+                data.namespace = value.into();
+            }
+        }
+        data.attrs.insert(name.into(), value.into());
     }
     pub fn del(&self, name: &str) {
         self.0.borrow_mut().attrs.remove(name);
@@ -274,7 +293,7 @@ impl Node {
     }
     pub fn content(&self) -> String {
         match &self.0.borrow().kind {
-            Kind::Text(s) => s.clone(),
+            Kind::Text(s) | Kind::Entity(s) => s.clone(),
             Kind::Raw(_) => String::new(),
             Kind::Element => self.nodes().iter().map(Self::content).collect(),
         }
@@ -310,13 +329,51 @@ impl Node {
         self.set("class", &c.join(" "));
     }
     pub fn serialize(&self) -> String {
+        self.serialize_with_bindings(&BTreeMap::from([(
+            "xml".into(),
+            "http://www.w3.org/XML/1998/namespace".into(),
+        )]))
+    }
+    fn serialize_with_bindings(&self, inherited: &BTreeMap<String, String>) -> String {
         let d = self.0.borrow();
         match &d.kind {
             Kind::Text(s) => escape_text(s),
-            Kind::Raw(s) => s.clone(),
+            Kind::Raw(s) | Kind::Entity(s) => s.clone(),
             Kind::Element => {
+                let mut bindings = inherited.clone();
+                let mut attrs = d.attrs.clone();
+                for (key, value) in &d.attrs {
+                    if key == "xmlns" {
+                        bindings.insert("".into(), value.clone());
+                    } else if let Some(prefix) = key.strip_prefix("xmlns:") {
+                        bindings.insert(prefix.into(), value.clone());
+                    }
+                }
+                let prefix = d.name.rsplit_once(':').map_or("", |(p, _)| p);
+                let mut required = BTreeMap::from([(prefix.to_string(), d.namespace.clone())]);
+                for attr in d.attrs.keys() {
+                    if let Some((prefix, _)) = attr.split_once(':')
+                        && prefix != "xmlns"
+                        && let Some(uri) = d.bindings.get(prefix)
+                    {
+                        required.insert(prefix.into(), uri.clone());
+                    }
+                }
+                for (prefix, uri) in required {
+                    if bindings.get(&prefix).map(String::as_str).unwrap_or("") != uri {
+                        attrs.insert(
+                            if prefix.is_empty() {
+                                "xmlns".into()
+                            } else {
+                                format!("xmlns:{prefix}")
+                            },
+                            uri.clone(),
+                        );
+                        bindings.insert(prefix, uri);
+                    }
+                }
                 let mut out = format!("<{}", d.name);
-                for (k, v) in &d.attrs {
+                for (k, v) in &attrs {
                     out.push_str(&format!(" {k}=\"{}\"", escape(v)));
                 }
                 if d.children.is_empty() {
@@ -324,7 +381,7 @@ impl Node {
                 } else {
                     out.push('>');
                     for c in &d.children {
-                        out.push_str(&c.serialize());
+                        out.push_str(&c.serialize_with_bindings(&bindings));
                     }
                     out.push_str(&format!("</{}>", d.name));
                 }
@@ -358,5 +415,26 @@ mod tests {
         let again = Xml::parse(serialized.as_bytes(), false).unwrap();
         assert_eq!(again.root.named("image")[0].get("xlink:href"), "x");
         assert!(serialized.contains("<!--note-->"));
+    }
+    #[test]
+    fn moving_nodes_preserves_inherited_namespace_bindings() {
+        let xml = Xml::parse(br#"<html xmlns="urn:html"><body><font xmlns:s="urn:s" xmlns:x="urn:x"><s:span x:href="book">Text</s:span></font></body></html>"#, false).unwrap();
+        xml.root.named("font")[0].unwrap();
+        let again = Xml::parse(xml.serialize().as_bytes(), false).unwrap();
+        let span = &again.root.named("span")[0];
+        assert_eq!(span.namespace(), "urn:s");
+        assert_eq!(span.get("x:href"), "book");
+        assert_eq!(span.0.borrow().bindings["x"], "urn:x");
+    }
+    #[test]
+    fn entity_references_and_doctype_are_retained_without_expansion() {
+        let xml = Xml::parse(
+            br#"<!DOCTYPE html [<!ENTITY word "Hello">]><html><p>&word;</p></html>"#,
+            false,
+        )
+        .unwrap();
+        assert_eq!(xml.root.normalized(), "&word;");
+        let again = Xml::parse(xml.serialize().as_bytes(), false).unwrap();
+        assert_eq!(again.root.normalized(), "&word;");
     }
 }
