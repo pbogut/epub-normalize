@@ -1,6 +1,9 @@
 pub mod archive;
 pub mod content;
+pub mod core;
+pub mod epubcheck;
 pub mod navigation;
+pub mod process;
 pub mod repair;
 pub mod roles;
 pub mod uri;

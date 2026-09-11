@@ -78,3 +78,100 @@ fn content_matches_python_fixtures() {
         }
     }
 }
+
+#[test]
+fn previews_match_python_fixtures() {
+    let cases: Vec<Value> =
+        serde_json::from_str(include_str!("fixtures/compatibility.json")).unwrap();
+    for case in cases {
+        if case.get("error").is_some() {
+            continue;
+        }
+        let name = case["name"].as_str().unwrap();
+        let preserve = case["preserve"].as_bool().unwrap();
+        let input =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("tests/fixtures/{name}.epub"));
+        let preview = epub_normalize::core::preview(&input, preserve).unwrap();
+        assert_eq!(
+            serde_json::to_value(preview).unwrap(),
+            case["preview"],
+            "{name}, preserve={preserve}"
+        );
+    }
+}
+
+#[test]
+fn complete_archives_match_python_fixtures() {
+    use epub_normalize::{
+        core::{self, Options},
+        epubcheck::Runner,
+    };
+    use std::io::Read;
+    let cases: Vec<Value> =
+        serde_json::from_str(include_str!("fixtures/compatibility.json")).unwrap();
+    for case in cases {
+        let name = case["name"].as_str().unwrap();
+        let preserve = case["preserve"].as_bool().unwrap();
+        let input =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("tests/fixtures/{name}.epub"));
+        let output = tempfile::tempdir().unwrap();
+        let checker = Runner::default();
+        let options = Options {
+            output_filename: Some("normalized.epub"),
+            preserve_publisher_css: preserve,
+            checker: Some(&checker),
+            ..Default::default()
+        };
+        let result = core::optimize(&input, output.path(), &options);
+        if let Some(error) = case.get("error") {
+            assert_eq!(result.unwrap_err().to_string(), error.as_str().unwrap());
+            continue;
+        }
+        let result = result.unwrap_or_else(|e| panic!("{name}, preserve={preserve}: {e}"));
+        let mut archive =
+            zip::ZipArchive::new(std::fs::File::open(&result.output_path).unwrap()).unwrap();
+        let expected = case["output"].as_object().unwrap();
+        assert_eq!(archive.len(), expected.len(), "{name}");
+        assert_eq!(archive.by_index(0).unwrap().name(), "mimetype");
+        assert_eq!(
+            archive.by_index(0).unwrap().compression(),
+            zip::CompressionMethod::Stored
+        );
+        for (path, bytes) in expected {
+            let expected: Vec<u8> = serde_json::from_value(bytes.clone()).unwrap();
+            let mut actual = Vec::new();
+            archive
+                .by_name(path)
+                .unwrap()
+                .read_to_end(&mut actual)
+                .unwrap();
+            if path.ends_with(".json") {
+                assert_eq!(
+                    serde_json::from_slice::<Value>(&actual).unwrap(),
+                    serde_json::from_slice::<Value>(&expected).unwrap(),
+                    "{name}, preserve={preserve}, {path}"
+                );
+            } else if [".xml", ".opf", ".xhtml", ".html", ".ncx"]
+                .iter()
+                .any(|suffix| path.ends_with(suffix))
+            {
+                let expected = Xml::parse(&expected, false).unwrap();
+                let actual = Xml::parse(&actual, false).unwrap();
+                assert_eq!(
+                    fingerprint(&actual.root),
+                    fingerprint(&expected.root),
+                    "{name}, preserve={preserve}, {path}"
+                );
+            } else {
+                assert_eq!(actual, expected, "{name}, preserve={preserve}, {path}");
+            }
+        }
+        let first_bytes = std::fs::read(&result.output_path).unwrap();
+        let second = core::optimize(&input, output.path(), &options).unwrap();
+        assert_eq!(
+            first_bytes,
+            std::fs::read(second.output_path).unwrap(),
+            "non-deterministic archive for {name}"
+        );
+    }
+}
