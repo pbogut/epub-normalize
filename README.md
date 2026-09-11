@@ -163,6 +163,14 @@ Each output contains `META-INF/epub-optimizer-report.json` with processing
 details and validation results. The internal stylesheet and report names retain
 the upstream names.
 
+Broken local hyperlinks are repaired before validation, even without EPUBCheck.
+The repair step searches existing EPUB documents and anchors for a unique target,
+including links whose paths became incorrect after a document was moved or split.
+It leaves valid local and external links unchanged. If a destination is missing
+or ambiguous, it removes the hyperlink's `href` while preserving its text and
+inline formatting. Each repair is recorded in the report and shown with `--verbose`.
+This does not relax validation of archive paths or resource references.
+
 `--dry-run` inspects the archive and reports document, removable stylesheet/font,
 and image counts. It does not run the full rewrite or EPUBCheck, so a successful
 preview does not guarantee that normalization will succeed.

@@ -3,14 +3,89 @@ from __future__ import annotations
 import mimetypes
 import posixpath
 import re
+from collections import defaultdict
 from pathlib import Path, PurePosixPath
-from urllib.parse import unquote, urlsplit
+from urllib.parse import quote, unquote, urlsplit, urlunsplit
 
 from lxml import etree
 
 from epub_optimizer.epubcheck import EpubCheckFinding
 
 OPF_NS = "http://www.idpf.org/2007/opf"
+
+
+def repair_hyperlinks(
+    work_dir: Path, package_dir: str, items: list[etree._Element]
+) -> list[str]:
+    """Repair local anchor links using only existing archive documents and anchors."""
+    documents: dict[Path, etree._ElementTree] = {}
+    anchors: dict[Path, set[str]] = {}
+    by_name: dict[str, set[Path]] = defaultdict(set)
+    by_anchor: dict[str, set[Path]] = defaultdict(set)
+    for item in items:
+        if item.get("media-type", "").lower() not in {
+            "application/xhtml+xml", "text/html", "application/x-dtbook+xml",
+        }:
+            continue
+        parsed = urlsplit(item.get("href", ""))
+        if parsed.scheme or parsed.netloc or not parsed.path:
+            continue
+        path = _safe_resolve(work_dir, package_dir, unquote(parsed.path))
+        if path is None or not path.is_file() or path in documents:
+            continue
+        tree = etree.parse(
+            str(path), etree.XMLParser(resolve_entities=False, no_network=True, recover=True)
+        )
+        if tree.getroot() is None:
+            continue
+        documents[path] = tree
+        anchors[path] = set(tree.xpath("//@id | //@name"))
+        by_name[path.name].add(path)
+        for anchor in anchors[path]:
+            by_anchor[anchor].add(path)
+
+    actions: list[str] = []
+    for source, tree in documents.items():
+        source_name = source.relative_to(work_dir.resolve()).as_posix()
+        changed = False
+        for element in tree.xpath("//*[local-name()='a'][@href]"):
+            href = element.attrib["href"]
+            parsed = urlsplit(href)
+            if parsed.scheme or parsed.netloc:
+                continue
+            path = unquote(parsed.path)
+            fragment = unquote(parsed.fragment)
+            target = (
+                _safe_resolve(work_dir, posixpath.dirname(source_name), path) if path else source
+            )
+            if target is not None and target.is_file():
+                if not fragment or (target not in documents and not _is_html(target.name)):
+                    continue
+                if fragment in anchors.get(target, set()) or (
+                    target not in documents and _fragment_exists(target, fragment)
+                ):
+                    continue
+            candidates = by_name.get(posixpath.basename(path), set())
+            if fragment:
+                matching_anchors = by_anchor.get(fragment, set())
+                candidates = candidates & matching_anchors or matching_anchors
+            if len(candidates) == 1:
+                replacement = next(iter(candidates))
+                relative = posixpath.relpath(replacement.as_posix(), source.parent.as_posix())
+                new_href = urlunsplit((
+                    "", "", quote(relative, safe="/"), parsed.query, parsed.fragment,
+                ))
+                element.attrib["href"] = new_href
+                actions.append(f"Repaired hyperlink in {source_name}: {href} -> {new_href}")
+            else:
+                del element.attrib["href"]
+                actions.append(
+                    f"Removed broken hyperlink in {source_name} (text preserved): {href}"
+                )
+            changed = True
+        if changed:
+            tree.write(str(source), encoding="utf-8", xml_declaration=True, pretty_print=False)
+    return actions
 
 
 def repair_workspace(

@@ -31,7 +31,7 @@ from epub_optimizer.models import (
     ValidationIssue,
     ValidationReport,
 )
-from epub_optimizer.repair import repair_workspace
+from epub_optimizer.repair import repair_hyperlinks, repair_workspace
 from epub_optimizer.style import CANONICAL_CSS
 
 OPF_NS = "http://www.idpf.org/2007/opf"
@@ -312,7 +312,9 @@ def optimize_epub(
         _append_log(log, f"Processed {processed_docs} content document(s).", progress)
         _ensure_optimizer_marker(package_root)
         _write_xml(package_tree, package_file)
-        repair_actions: list[str] = []
+        repair_actions = repair_hyperlinks(work_dir, package_dir, _manifest_items(manifest))
+        for action in repair_actions:
+            _append_log(log, action, progress)
         _write_change_manifest(
             work_dir,
             {

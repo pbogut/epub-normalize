@@ -234,14 +234,14 @@ def test_optimize_repairs_broken_link_and_rechecks_to_zero_errors(tmp_path: Path
     result = optimize_epub(
         source,
         tmp_path / "out",
-        epubcheck=_SequentialEpubCheck(broken, broken, clean, clean),
+        epubcheck=_SequentialEpubCheck(broken, clean, clean),
     )
 
     assert result.epubcheck is not None
     assert result.epubcheck.output.errors == []
     assert result.validation_outcome == "clean"
     assert result.repair_actions == [
-        "Removed broken link target (text preserved): missing.xhtml"
+        "Removed broken hyperlink in OEBPS/Text/chapter.xhtml (text preserved): missing.xhtml"
     ]
     with zipfile.ZipFile(result.output_path) as archive:
         chapter = archive.read("OEBPS/Text/chapter.xhtml").decode("utf-8")
@@ -259,7 +259,7 @@ def test_optimize_rejects_unavailable_epubcheck_after_repair(tmp_path: Path) -> 
     output_dir.mkdir()
     existing_output = output_dir / "book-optimized.epub"
     existing_output.write_bytes(b"existing")
-    _write_minimal_epub(source, broken_link=True)
+    _write_minimal_epub(source, broken_resource=True)
     finding = EpubCheckFinding(
         "error", "RSC-007", "Referenced resource is missing", "OEBPS/Text/chapter.xhtml"
     )
@@ -1023,10 +1023,14 @@ def _write_minimal_epub(
     path: Path,
     *,
     broken_link: bool = False,
+    broken_resource: bool = False,
     encrypted_font: bool = False,
     include_font_file: bool = True,
 ) -> None:
     broken_link_markup = '<p><a href="missing.xhtml">Missing chapter</a></p>' if broken_link else ""
+    broken_resource_markup = (
+        '<object data="missing.bin">Fallback text</object>' if broken_resource else ""
+    )
     with zipfile.ZipFile(path, "w") as archive:
         archive.writestr(
             "mimetype",
@@ -1104,6 +1108,7 @@ def _write_minimal_epub(
     <p class="indent"><span class="publisher">Second</span> paragraph with
     <span class="strike">struck text</span>.</p>
     {broken_link_markup}
+    {broken_resource_markup}
   </body>
 </html>
 """,
@@ -1500,8 +1505,20 @@ def _write_front_matter_div_epub(path: Path) -> None:
         )
 
 
+def _write_stub_documents(archive: zipfile.ZipFile, paths: list[str]) -> None:
+    for path in paths:
+        archive.writestr(
+            path,
+            '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Test</title></head>'
+            '<body><p>Referenced content.</p></body></html>',
+        )
+
+
 def _write_toc_epub(path: Path) -> None:
     with zipfile.ZipFile(path, "w") as archive:
+        _write_stub_documents(
+            archive, ["OEBPS/title.xhtml", "OEBPS/part001.xhtml", "OEBPS/chapter002.xhtml"]
+        )
         archive.writestr(
             "mimetype",
             "application/epub+zip",
@@ -1532,6 +1549,9 @@ def _write_toc_epub(path: Path) -> None:
           media-type="application/xhtml+xml"
           properties="nav"/>
     <item id="chapter001" href="OEBPS/chapter001.xhtml" media-type="application/xhtml+xml"/>
+    <item id="title" href="OEBPS/title.xhtml" media-type="application/xhtml+xml"/>
+    <item id="part001" href="OEBPS/part001.xhtml" media-type="application/xhtml+xml"/>
+    <item id="chapter002" href="OEBPS/chapter002.xhtml" media-type="application/xhtml+xml"/>
   </manifest>
   <spine>
     <itemref idref="contents"/>
@@ -1572,6 +1592,10 @@ def _write_toc_epub(path: Path) -> None:
 
 def _write_swedish_toc_epub(path: Path) -> None:
     with zipfile.ZipFile(path, "w") as archive:
+        _write_stub_documents(archive, [
+            "OEBPS/kapitel001.xhtml", "OEBPS/del.xhtml",
+            "OEBPS/kapitel002.xhtml", "OEBPS/kapitel003.xhtml",
+        ])
         archive.writestr("mimetype", "application/epub+zip", compress_type=zipfile.ZIP_STORED)
         archive.writestr(
             "META-INF/container.xml",
@@ -1594,6 +1618,10 @@ def _write_swedish_toc_epub(path: Path) -> None:
   </metadata>
   <manifest>
     <item id="innehall" href="OEBPS/innehall.xhtml" media-type="application/xhtml+xml"/>
+    <item id="kapitel001" href="OEBPS/kapitel001.xhtml" media-type="application/xhtml+xml"/>
+    <item id="kapitel002" href="OEBPS/kapitel002.xhtml" media-type="application/xhtml+xml"/>
+    <item id="kapitel003" href="OEBPS/kapitel003.xhtml" media-type="application/xhtml+xml"/>
+    <item id="del" href="OEBPS/del.xhtml" media-type="application/xhtml+xml"/>
   </manifest>
   <spine>
     <itemref idref="innehall"/>
@@ -1620,6 +1648,9 @@ def _write_swedish_toc_epub(path: Path) -> None:
 
 def _write_opaque_front_matter_epub(path: Path) -> None:
     with zipfile.ZipFile(path, "w") as archive:
+        _write_stub_documents(
+            archive, ["OEBPS/intro.xhtml", "OEBPS/note.xhtml", "OEBPS/split008.xhtml"]
+        )
         archive.writestr(
             "mimetype",
             "application/epub+zip",
@@ -1648,6 +1679,9 @@ def _write_opaque_front_matter_epub(path: Path) -> None:
     <item id="style" href="stylesheet.css" media-type="text/css"/>
     <item id="id2" href="split002.xhtml" media-type="application/xhtml+xml"/>
     <item id="id3" href="split003.xhtml" media-type="application/xhtml+xml"/>
+    <item id="id8" href="split008.xhtml" media-type="application/xhtml+xml"/>
+    <item id="intro" href="intro.xhtml" media-type="application/xhtml+xml"/>
+    <item id="note" href="note.xhtml" media-type="application/xhtml+xml"/>
     <item id="id9" href="split009.xhtml" media-type="application/xhtml+xml"/>
   </manifest>
   <spine>

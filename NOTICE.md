@@ -14,6 +14,7 @@ This adaptation adds CLI packaging and a command-line interface, and updates
 package version reporting. It also annotates synchronous closure calls for lint.
 One imported test was updated to account
 for the engine wrapping blockquote text in paragraphs. It excludes the web
-server and Docker setup.
+server and Docker setup. The adaptation also adds local hyperlink repair before
+validation and updates integration fixtures to provide their referenced documents.
 
 EPUBCheck and Java are optional external programs and are not bundled.
