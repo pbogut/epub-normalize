@@ -1,30 +1,43 @@
 # epub-normalize
 
-Normalize EPUB typography from the command line, using the processing engine
-from [HenryBaby/epub-optimizer](https://github.com/HenryBaby/epub-optimizer).
-Runs locally with Python 3.12 or newer. The only runtime Python dependencies
-are `lxml` and `defusedxml`.
+Normalize EPUB typography from the command line. This is a native Rust port of
+the processing engine from
+[HenryBaby/epub-optimizer](https://github.com/HenryBaby/epub-optimizer), with local
+Calibre integration. File normalization runs without Python. The executable
+uses libxml2 for XML parsing.
 
 ## Install
 
-From this checkout, install with [pipx](https://pipx.pypa.io/):
+Install a current stable Rust toolchain with [rustup](https://rustup.rs/).
+Building also needs a C toolchain, `pkg-config`, libxml2 development files, and
+libclang. On Debian or Ubuntu:
 
 ```sh
-pipx install .
+sudo apt install build-essential pkg-config libxml2-dev libclang-dev
 ```
 
-To update an existing pipx installation after changing this checkout:
+From this checkout:
 
 ```sh
-pipx install --force .
+cargo install --locked --path .
 ```
 
-Or use a virtual environment:
+This installs `epub-normalize` in `~/.cargo/bin`. Ensure that directory is on
+your PATH. To replace an existing Cargo installation after changing this checkout:
 
 ```sh
-python3 -m venv .venv
-.venv/bin/python -m pip install .
-.venv/bin/epub-normalize book.epub
+cargo install --locked --path . --force
+```
+
+If you previously installed the Python version through pipx, remove that
+installation with `pipx uninstall epub-normalize` so it does not shadow the Rust
+executable.
+
+You can also build and run without installing:
+
+```sh
+cargo build --release --locked
+./target/release/epub-normalize book.epub
 ```
 
 ## Usage
@@ -148,7 +161,7 @@ it in single-book mode using its reported ID, for example
 
 ## What changes
 
-The upstream engine supports EPUB 2 and EPUB 3. By default it:
+The engine supports EPUB 2 and EPUB 3. By default it:
 
 - Replaces publisher CSS with a shared typography stylesheet.
 - Removes embedded fonts and obsolete stylesheet entries.
@@ -200,15 +213,25 @@ The command prints one of these outcomes:
 ## Development
 
 ```sh
-python3 -m venv .venv
-.venv/bin/python -m pip install -e '.[dev]'
-.venv/bin/pytest
-.venv/bin/ruff check .
+cargo fmt --check
+cargo clippy --locked --all-targets -- -D warnings
+cargo test --locked
+cargo build --release --locked
 ```
 
-When `calibredb` is installed, the tests also exercise normalization and repeated
-imports in a disposable library with isolated Calibre settings. That integration
-test is skipped when Calibre is unavailable.
+The tests include 48 compatibility cases captured from the previous Python
+implementation. They compare previews, XML structure and text, embedded reports,
+and resource bytes in both publisher-CSS modes. XML attribute order, namespace
+declaration placement, and ZIP compression bytes can differ from the Python
+implementation. Repeated runs of the Rust implementation produce deterministic
+archives for the same input and options.
+
+CLI tests cover batch failures, output aliases, concurrent output creation,
+EPUBCheck timeouts, cancellation, and Calibre import ordering. When `calibredb`
+is installed, integration tests also exercise real imports and repeated runs in
+disposable libraries with isolated Calibre settings. Those tests skip when
+Calibre is unavailable and run sequentially because Calibre uses a global writer
+lock.
 
 ## License
 
